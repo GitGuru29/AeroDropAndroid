@@ -38,6 +38,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aerodrop.discovery.AeroAdvertiser
 import com.aerodrop.discovery.AeroDiscoveryService
 import com.aerodrop.discovery.AeroPeer
 import com.aerodrop.transfer.AeroReceiverService
@@ -71,7 +72,8 @@ sealed class UiTransferState {
 // eliminating the lateinit race that caused the crash.
 class AeroViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val discovery = AeroDiscoveryService(app)
+    private val discovery   = AeroDiscoveryService(app)
+    private val advertiser  = AeroAdvertiser(app)      // Advertise this device on _aerodrop._tcp
 
     // Exposed as a stable StateFlow — safe to collect on frame 1
     val peers: StateFlow<List<AeroPeer>> = discovery.peers
@@ -86,8 +88,9 @@ class AeroViewModel(app: Application) : AndroidViewModel(app) {
     val receiving = _receiving.asStateFlow()
 
     init {
-        // Start discovery immediately — no Activity needed
+        // Browse for Mac peers + advertise this device so the Mac finds us
         discovery.startDiscovery()
+        advertiser.startAdvertising()
     }
 
     fun selectPeer(peer: AeroPeer) { _selectedPeer.value = peer }
@@ -125,6 +128,7 @@ class AeroViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         super.onCleared()
         discovery.stopDiscovery()
+        advertiser.stopAdvertising()
     }
 }
 
