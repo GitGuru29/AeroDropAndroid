@@ -33,7 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,11 +66,15 @@ sealed class UiTransferState {
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
-class AeroViewModel : ViewModel() {
+// AndroidViewModel provides Application context in the constructor —
+// discovery is initialised synchronously before the first Compose frame,
+// eliminating the lateinit race that caused the crash.
+class AeroViewModel(app: Application) : AndroidViewModel(app) {
 
-    private lateinit var discovery: AeroDiscoveryService
+    private val discovery = AeroDiscoveryService(app)
 
-    val peers: StateFlow<List<AeroPeer>> get() = discovery.peers
+    // Exposed as a stable StateFlow — safe to collect on frame 1
+    val peers: StateFlow<List<AeroPeer>> = discovery.peers
 
     private val _selectedPeer  = MutableStateFlow<AeroPeer?>(null)
     val selectedPeer = _selectedPeer.asStateFlow()
@@ -77,24 +82,25 @@ class AeroViewModel : ViewModel() {
     private val _transferState = MutableStateFlow<UiTransferState>(UiTransferState.Idle)
     val transferState = _transferState.asStateFlow()
 
-    private val _receiving     = MutableStateFlow(false)
+    private val _receiving = MutableStateFlow(false)
     val receiving = _receiving.asStateFlow()
 
-    fun init(activity: Activity) {
-        discovery = AeroDiscoveryService(activity)
+    init {
+        // Start discovery immediately — no Activity needed
         discovery.startDiscovery()
     }
 
     fun selectPeer(peer: AeroPeer) { _selectedPeer.value = peer }
 
-    fun sendFile(activity: Activity, uri: Uri) {
+    fun sendFile(context: android.content.Context, uri: Uri) {
         val peer = _selectedPeer.value ?: return
         viewModelScope.launch {
-            AeroTransferClient.sendFile(activity, uri, peer.host, peer.port)
+            AeroTransferClient.sendFile(context, uri, peer.host, peer.port)
                 .collect { event ->
                     _transferState.value = when (event) {
                         is TransferEvent.Progress -> UiTransferState.Active(
-                            event.filename, (event.bytes.toFloat() / event.total).coerceIn(0f, 1f),
+                            event.filename,
+                            (event.bytes.toFloat() / event.total).coerceIn(0f, 1f),
                             event.speedMbps)
                         is TransferEvent.Success  -> UiTransferState.Done(event.filename, true)
                         is TransferEvent.Failure  -> UiTransferState.Done("", false, event.reason)
@@ -105,19 +111,20 @@ class AeroViewModel : ViewModel() {
         }
     }
 
-    fun toggleReceiver(activity: Activity) {
+    fun toggleReceiver(context: android.content.Context) {
+        val intent = Intent(context, AeroReceiverService::class.java)
         if (_receiving.value) {
-            activity.stopService(Intent(activity, AeroReceiverService::class.java))
+            context.stopService(intent)
             _receiving.value = false
         } else {
-            activity.startForegroundService(Intent(activity, AeroReceiverService::class.java))
+            context.startForegroundService(intent)
             _receiving.value = true
         }
     }
 
     override fun onCleared() {
         super.onCleared()
-        if (::discovery.isInitialized) discovery.stopDiscovery()
+        discovery.stopDiscovery()
     }
 }
 
@@ -138,24 +145,26 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AeroDropScreen(vm: AeroViewModel = viewModel()) {
-    val activity      = androidx.compose.ui.platform.LocalContext.current as Activity
+    val context       = androidx.compose.ui.platform.LocalContext.current
     val peers         by vm.peers.collectAsStateWithLifecycle(emptyList())
     val selectedPeer  by vm.selectedPeer.collectAsStateWithLifecycle()
     val transferState by vm.transferState.collectAsStateWithLifecycle()
     val receiving     by vm.receiving.collectAsStateWithLifecycle()
 
-    LaunchedEffect(Unit) { vm.init(activity) }
+    // No vm.init() needed — discovery starts in AndroidViewModel.init{}
 
     // File picker launcher
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> uri?.let { vm.sendFile(activity, it) } }
+    ) { uri: Uri? -> uri?.let { vm.sendFile(context, it) } }
 
-    // Handle incoming Share intent
+    // Handle incoming Share intent (fires once after first composition)
     LaunchedEffect(Unit) {
-        val uri = (activity.intent?.takeIf { it.action == Intent.ACTION_SEND }
-            ?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
-        uri?.let { vm.sendFile(activity, it) }
+        val activity = context as? Activity ?: return@LaunchedEffect
+        val uri = activity.intent
+            ?.takeIf { it.action == Intent.ACTION_SEND }
+            ?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        uri?.let { vm.sendFile(context, it) }
     }
 
     Box(
@@ -179,7 +188,7 @@ fun AeroDropScreen(vm: AeroViewModel = viewModel()) {
             )
 
             // ── Receiver toggle ───────────────────────────────────────────
-            ReceiverToggle(receiving) { vm.toggleReceiver(activity) }
+            ReceiverToggle(receiving) { vm.toggleReceiver(context) }
         }
     }
 }
