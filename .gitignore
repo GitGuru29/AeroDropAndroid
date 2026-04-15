@@ -13,3 +13,5 @@ captures/
 .cxx/
 *.keystore
 !debug.keystore
+.DS_Store
+**/.DS_Store
