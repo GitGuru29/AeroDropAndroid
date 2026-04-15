@@ -4,21 +4,33 @@ package com.aerodrop.transfer
 // Connects to the macOS AeroServer via TLS 1.3 and sends a file.
 // Returns a cold Flow<TransferEvent> so the caller collects progress reactively.
 //
-// Large-file fixes applied:
-//   1. WifiLock (HIGH_PERF) — prevents WiFi from sleeping during transfer
-//   2. Socket buffer tuning — 4 MB SO_SNDBUF to batch TLS records
-//   3. TCP_NODELAY — disables Nagle, reduces latency for the last partial chunk
-//   4. soTimeout = 0 — infinite I/O timeout (default is already 0, made explicit)
-//   5. Progress throttled to every 1 MB so emit() never slows the write loop
+// Trust model: Accept-all TrustManager — MAC cert is self-signed.
+// Fingerprint comparison happens in the UI pairing flow (Phase 4).
+//
+// Large-file fixes (v2):
+//   1. Filename: query OpenableColumns.DISPLAY_NAME — works for all URI schemes
+//      including content://, file://, and storage framework URIs.
+//   2. File size: query OpenableColumns.SIZE first, fallback to statSize.
+//      statSize returns -1 for many providers (Google Drive, Downloads).
+//      Sending -1 in the header causes the Mac to loop forever trying to
+//      read 18 exabytes → connection hangs.
+//   3. Raw Socket tuning: create a plain Socket, set SO_SNDBUF=4MB and
+//      TCP_NODELAY=true BEFORE wrapping in TLS. SSLSocket inherits the
+//      OS-level buffer, eliminating the default 8 KB bottleneck.
+//   4. Write loop bounded by fileSize — stops exactly at EOF even if the
+//      stream continues beyond the declared size.
+//   5. Connect timeout of 10 s prevents indefinite hangs on unreachable peers.
 
 import android.content.Context
 import android.net.Uri
-import android.net.wifi.WifiManager
+import android.provider.OpenableColumns
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import java.net.InetSocketAddress
+import java.net.Socket
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
@@ -36,17 +48,17 @@ sealed class TransferEvent {
     ) : TransferEvent()
 
     data class Success(val filename: String) : TransferEvent()
-    data class Failure(val reason: String)  : TransferEvent()
+    data class Failure(val reason: String)   : TransferEvent()
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
 object AeroTransferClient {
 
-    private const val TAG         = "AeroTransfer"
-    private const val BUFFER_SIZE = 256 * 1024          // 256 KiB per read
-    private const val SOCK_BUF    = 4  * 1024 * 1024   // 4 MB TCP send buffer
-    private const val PROG_EVERY  = 1  * 1024 * 1024   // emit progress every 1 MB
+    private const val TAG              = "AeroTransfer"
+    private const val BUFFER_SIZE      = 512 * 1024      // 512 KiB — large-file throughput
+    private const val SEND_BUF_SIZE    = 4 * 1024 * 1024 // 4 MB OS-level send buffer
+    private const val CONNECT_TIMEOUT  = 10_000           // 10 s connect timeout
 
     // Trust-all TLS context — fingerprint shown in UI for manual verification
     private fun trustAllSslContext(): SSLContext =
@@ -59,11 +71,44 @@ object AeroTransferClient {
         }
 
     /**
+     * Query filename AND size from ContentResolver.
+     * Works for all URI schemes: content://, file://, storage-framework URIs.
+     *
+     * Bug fixed: uri.lastPathSegment gives "%2F…" encoded garbage for content://
+     * URIs and statSize returns -1 for cloud-backed URIs (Drive, Downloads).
+     */
+    private data class FileInfo(val name: String, val size: Long)
+
+    private fun queryFileInfo(context: Context, uri: Uri): FileInfo {
+        var name = "aerodrop_file"
+        var size = -1L
+
+        // Primary: ContentResolver query (works for all providers)
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val ni = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val si = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (ni >= 0) cursor.getString(ni)?.let { name = it }
+                if (si >= 0 && !cursor.isNull(si)) size = cursor.getLong(si)
+            }
+        }
+
+        // Fallback: ParcelFileDescriptor.statSize (works for local files)
+        if (size <= 0) {
+            size = context.contentResolver
+                .openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+        }
+
+        return FileInfo(name, size)
+    }
+
+    /**
      * Send the file at [uri] to the Mac at [host]:[port].
      * Collect the returned Flow on Dispatchers.Main to update UI.
-     *
-     * A HIGH_PERF WifiLock is held for the duration to prevent the radio
-     * from throttling or suspending during large transfers.
      */
     fun sendFile(
         context: Context,
@@ -72,80 +117,79 @@ object AeroTransferClient {
         port:    Int
     ): Flow<TransferEvent> = flow {
 
-        val cr       = context.contentResolver
-        val filename = uri.lastPathSegment?.substringAfterLast('/') ?: "aerodrop_file"
-        val fileSize = cr.openFileDescriptor(uri, "r")?.use { it.statSize } ?: run {
-            emit(TransferEvent.Failure("Cannot read file size")); return@flow
+        // ── Resolve filename + size ───────────────────────────────────────────
+        val (filename, fileSize) = queryFileInfo(context, uri)
+
+        if (fileSize <= 0) {
+            emit(TransferEvent.Failure(
+                "Cannot determine file size (tried ContentResolver + statSize). " +
+                "Got: $fileSize bytes."
+            ))
+            return@flow
         }
 
-        Log.d(TAG, "Sending '$filename' (${fileSize / 1_048_576} MB) → $host:$port")
-
-        // ── WifiLock: keeps the radio at full power for the whole transfer ──
-        val wifiMgr  = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        @Suppress("DEPRECATION")
-        val wifiLock = wifiMgr.createWifiLock(
-            WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AeroDrop::SendLock"
-        ).also { it.acquire() }
+        Log.d(TAG, "Sending '$filename' ($fileSize bytes) → $host:$port")
 
         try {
-            val socket = trustAllSslContext().socketFactory
-                .createSocket(host, port) as SSLSocket
+            // ── Raw socket — tune OS buffers BEFORE TLS wrapping ─────────────
+            // SSLSocket inherits these from the underlying Socket, so setting
+            // them on SSLSocket directly has no effect on some Android versions.
+            val rawSocket = Socket()
+            rawSocket.tcpNoDelay        = true              // Disable Nagle — no latency spikes
+            rawSocket.sendBufferSize    = SEND_BUF_SIZE     // 4 MB — eliminates 8 KB bottleneck
+            rawSocket.receiveBufferSize = 256 * 1024        // 256 KB RCV for ACK throughput
+            rawSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
 
-            // ── Socket tuning ────────────────────────────────────────────
-            socket.sendBufferSize    = SOCK_BUF   // 4 MB TCP buffer
-            socket.tcpNoDelay        = true        // flush immediately on partial chunk
-            socket.soTimeout         = 0           // no I/O timeout (explicit)
-            socket.enabledProtocols  = arrayOf("TLSv1.3")
-            socket.startHandshake()
+            // ── Wrap in TLS 1.3 ──────────────────────────────────────────────
+            val sslSocket = trustAllSslContext().socketFactory
+                .createSocket(rawSocket, host, port, /* autoClose = */ true) as SSLSocket
+            sslSocket.enabledProtocols = arrayOf("TLSv1.3")
+            sslSocket.startHandshake()
 
-            val out = socket.outputStream
+            val out = sslSocket.outputStream
 
-            // Send 64-byte AeroHeader
-            out.write(AeroHeader(fileSize = fileSize, filename = filename).toBytes())
+            // ── Send AeroHeader (64 bytes) ────────────────────────────────────
+            val header = AeroHeader(fileSize = fileSize, filename = filename)
+            out.write(header.toBytes())
 
-            // Stream payload
-            val input = cr.openInputStream(uri) ?: run {
-                emit(TransferEvent.Failure("Cannot open file stream"))
-                socket.close()
+            // ── Stream file payload ───────────────────────────────────────────
+            val input = context.contentResolver.openInputStream(uri) ?: run {
+                emit(TransferEvent.Failure("Cannot open InputStream for URI"))
+                sslSocket.close()
                 return@flow
             }
 
-            val buf       = ByteArray(BUFFER_SIZE)
-            var sent      = 0L
-            var lastProg  = 0L          // last byte count we emitted progress for
-            val t0        = System.currentTimeMillis()
+            val buf   = ByteArray(BUFFER_SIZE)
+            var sent  = 0L
+            val t0    = System.currentTimeMillis()
 
-            input.use {
-                while (true) {
-                    val rd = it.read(buf)
-                    if (rd < 0) break
+            input.use { stream ->
+                while (sent < fileSize) {
+                    // Never read more than what's declared in the header
+                    val remaining = fileSize - sent
+                    val toRead    = minOf(buf.size.toLong(), remaining).toInt()
+                    val rd        = stream.read(buf, 0, toRead)
+                    if (rd < 0) break           // EOF before fileSize — fail gracefully
                     out.write(buf, 0, rd)
                     sent += rd
-
-                    // Throttle progress: emit only every PROG_EVERY bytes
-                    if (sent - lastProg >= PROG_EVERY || sent == fileSize) {
-                        val sec   = (System.currentTimeMillis() - t0) / 1000.0
-                        val speed = if (sec > 0) (sent / 1_000_000.0) / sec else 0.0
-                        emit(TransferEvent.Progress(filename, sent, fileSize, speed))
-                        lastProg = sent
-                    }
+                    val sec   = (System.currentTimeMillis() - t0) / 1000.0
+                    val speed = if (sec > 0) (sent / 1_000_000.0) / sec else 0.0
+                    emit(TransferEvent.Progress(filename, sent, fileSize, speed))
                 }
             }
 
             out.flush()
-            socket.close()
+            sslSocket.close()
 
             if (sent == fileSize) {
                 emit(TransferEvent.Success(filename))
             } else {
-                emit(TransferEvent.Failure("Incomplete: $sent / $fileSize bytes sent"))
+                emit(TransferEvent.Failure("Incomplete: sent $sent of $fileSize bytes"))
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Transfer error", e)
             emit(TransferEvent.Failure(e.message ?: "Unknown error"))
-        } finally {
-            if (wifiLock.isHeld) wifiLock.release()
         }
 
     }.flowOn(Dispatchers.IO)
