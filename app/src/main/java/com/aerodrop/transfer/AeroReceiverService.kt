@@ -14,12 +14,8 @@ import androidx.core.app.NotificationCompat
 import com.aerodrop.MainActivity
 import com.aerodrop.system.MediaStoreHelper
 import kotlinx.coroutines.*
-import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
-import java.security.cert.X509Certificate
 
 class AeroReceiverService : Service() {
 
@@ -54,23 +50,16 @@ class AeroReceiverService : Service() {
         super.onDestroy()
     }
 
-    // ── TLS server socket ─────────────────────────────────────────────────────
-
-    private fun trustAllContext(): SSLContext =
-        SSLContext.getInstance("TLSv1.3").apply {
-            init(null, arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
-                override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            }), null)
-        }
-
     private fun startListening() {
         scope.launch {
             try {
-                server = trustAllContext()
+                // AeroCertManager.serverSslContext() provides a context with a
+                // real ECDSA server certificate from AndroidKeyStore.
+                // trustAllContext() with null KeyManager had NO cert and caused
+                // every TLS handshake from macOS to fail immediately.
+                server = AeroCertManager.serverSslContext()
                     .serverSocketFactory.createServerSocket(PORT) as SSLServerSocket
-                Log.d(TAG, "TLS server on port $PORT")
+                Log.d(TAG, "TLS 1.3 server ready on port $PORT")
 
                 while (isActive) {
                     val client = server?.accept() ?: break
@@ -104,7 +93,7 @@ class AeroReceiverService : Service() {
             Log.d(TAG, "Receiving '${header.filename}' (${header.fileSize} B)")
             notify("Receiving ${header.filename}…")
 
-            val buf      = ByteArray(128 * 1024)
+            val buf      = ByteArray(512 * 1024) // 512 KiB — large file throughput
             var received = 0L
             val t0       = System.currentTimeMillis()
 

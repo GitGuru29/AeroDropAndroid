@@ -31,11 +31,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.net.InetSocketAddress
 import java.net.Socket
-import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
-import java.security.cert.X509Certificate
 
 // ── Transfer event types ──────────────────────────────────────────────────────
 
@@ -60,15 +56,6 @@ object AeroTransferClient {
     private const val SEND_BUF_SIZE    = 4 * 1024 * 1024 // 4 MB OS-level send buffer
     private const val CONNECT_TIMEOUT  = 10_000           // 10 s connect timeout
 
-    // Trust-all TLS context — fingerprint shown in UI for manual verification
-    private fun trustAllSslContext(): SSLContext =
-        SSLContext.getInstance("TLSv1.3").apply {
-            init(null, arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<X509Certificate>, auth: String) {}
-                override fun checkServerTrusted(chain: Array<X509Certificate>, auth: String) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            }), null)
-        }
 
     /**
      * Query filename AND size from ContentResolver.
@@ -141,7 +128,7 @@ object AeroTransferClient {
             rawSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
 
             // ── Wrap in TLS 1.3 ──────────────────────────────────────────────
-            val sslSocket = trustAllSslContext().socketFactory
+            val sslSocket = AeroCertManager.clientSslContext().socketFactory
                 .createSocket(rawSocket, host, port, /* autoClose = */ true) as SSLSocket
             sslSocket.enabledProtocols = arrayOf("TLSv1.3")
             sslSocket.startHandshake()
