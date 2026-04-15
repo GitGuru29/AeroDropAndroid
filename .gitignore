@@ -1,0 +1,15 @@
+
+# Android
+*.apk
+*.aar
+*.ap_
+*.aab
+local.properties
+.idea/
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.keystore
+!debug.keystore
