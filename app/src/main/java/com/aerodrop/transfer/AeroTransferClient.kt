@@ -149,6 +149,7 @@ object AeroTransferClient {
             val buf   = ByteArray(BUFFER_SIZE)
             var sent  = 0L
             val t0    = System.currentTimeMillis()
+            var lastEmit = 0L
 
             input.use { stream ->
                 while (sent < fileSize) {
@@ -159,9 +160,14 @@ object AeroTransferClient {
                     if (rd < 0) break           // EOF before fileSize — fail gracefully
                     out.write(buf, 0, rd)
                     sent += rd
-                    val sec   = (System.currentTimeMillis() - t0) / 1000.0
-                    val speed = if (sec > 0) (sent / 1_000_000.0) / sec else 0.0
-                    emit(TransferEvent.Progress(filename, sent, fileSize, speed))
+                    
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmit > 100) {
+                        lastEmit = now
+                        val sec   = (now - t0) / 1000.0
+                        val speed = if (sec > 0) (sent / 1_000_000.0) / sec else 0.0
+                        emit(TransferEvent.Progress(filename, sent, fileSize, speed))
+                    }
                 }
             }
 

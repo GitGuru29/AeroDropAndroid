@@ -96,6 +96,7 @@ class AeroReceiverService : Service() {
             val buf      = ByteArray(512 * 1024) // 512 KiB — large file throughput
             var received = 0L
             val t0       = System.currentTimeMillis()
+            var lastNotify = 0L
 
             mediaStore.openOutputStream(header.filename)?.use { out ->
                 while (received < header.fileSize) {
@@ -104,10 +105,15 @@ class AeroReceiverService : Service() {
                     if (n < 0) break
                     out.write(buf, 0, n)
                     received += n
-                    val pct   = (received * 100 / header.fileSize).toInt()
-                    val sec   = (System.currentTimeMillis() - t0) / 1000.0
-                    val speed = if (sec > 0) String.format("%.1f MB/s", (received / 1e6) / sec) else ""
-                    notify("${header.filename} — $pct% $speed")
+                    
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotify > 250) {
+                        lastNotify = now
+                        val pct   = (received * 100 / header.fileSize).toInt()
+                        val sec   = (now - t0) / 1000.0
+                        val speed = if (sec > 0) String.format("%.1f MB/s", (received / 1e6) / sec) else ""
+                        notify("${header.filename} — $pct% $speed")
+                    }
                 }
             }
 
