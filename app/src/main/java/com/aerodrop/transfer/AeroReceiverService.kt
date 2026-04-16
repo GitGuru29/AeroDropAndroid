@@ -133,7 +133,7 @@ class AeroReceiverService : Service() {
     private fun acquireWakeLock() {
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AeroDrop::Receiver")
-        wakeLock?.acquire(10 * 60 * 1000L) // max 10 min
+        wakeLock?.acquire(60 * 60 * 1000L) // max 60 min for huge files
     }
 
     // ── Notification ──────────────────────────────────────────────────────────
