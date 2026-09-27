@@ -51,4 +51,20 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    testImplementation("junit:junit:4.13.2")
+}
+
+// The interop tests drive the real macOS transport, compiled by
+// tools/build-mac-peer.sh. Its location is passed in rather than guessed from
+// the working directory, which differs between Gradle and an IDE.
+tasks.withType<Test>().configureEach {
+    systemProperty("aerodrop.macPeer", rootProject.file("tools/macpeer").absolutePath)
+    // The peer is an OpenSSL binary linked against Homebrew, so the loader needs
+    // to be able to find libssl on a machine where it is not in the default path.
+    systemProperty("aerodrop.sslPrefix", System.getenv("OPENSSL_PREFIX") ?: "/opt/homebrew/opt/openssl@3")
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }

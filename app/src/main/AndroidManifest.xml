@@ -1,56 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network -->
+    <!-- Reaching the Mac, and being reachable by it. Both are required: we
+         connect out to send, and we listen in to receive. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- mDNS multicast is dropped by the Wi-Fi stack on many devices without
+         this; without it discovery silently finds nothing. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
-    <!-- mDNS discovery works without extra permissions via NsdManager -->
-
-    <!-- Background receiver service -->
+    <!-- The receiver holds a TLS socket open, which Android 14+ requires to be
+         declared as a typed foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Notifications (Android 13+) -->
+    <!-- Transfer progress is surfaced as a notification; optional on Android 13+. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <application
-        android:allowBackup="true"
-        android:label="@string/app_name"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.AeroDrop">
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
 
-        <!-- Main launcher activity -->
+    <application
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@drawable/ic_aerodrop"
+        android:label="@string/app_name"
+        android:roundIcon="@drawable/ic_aerodrop"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AeroDrop"
+        tools:targetApi="34">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.AeroDrop"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Share sheet: drag any file into AeroDrop from another app -->
+            <!-- Share sheet: hand a file to a Mac from any other app. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
-        <!-- Background receiver — keeps a TLS ServerSocket alive to accept
-             incoming files from Mac. foregroundServiceType=dataSync is
-             required on Android 14+ when binding network sockets. -->
+        <!-- Keeps the TLS listener bound so the Mac can push files at any time.
+             dataSync is the type Android 14+ requires for holding a network
+             socket open from the background. -->
         <service
             android:name=".transfer.AeroReceiverService"
+            android:exported="false"
             android:foregroundServiceType="dataSync"
-            android:exported="false" />
+            tools:targetApi="29" />
 
     </application>
 

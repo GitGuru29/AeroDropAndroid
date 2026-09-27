@@ -15,3 +15,6 @@ captures/
 !debug.keystore
 .DS_Store
 **/.DS_Store
+
+# Interop test peer: a compiled binary, rebuilt by tools/build-mac-peer.sh
+tools/macpeer
