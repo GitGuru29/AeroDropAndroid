@@ -43,6 +43,8 @@ sealed class TransferUi {
         val filename:  String,
         val fraction:  Float,
         val speedMBs:  Double,
+        /** Total bytes on the wire, so the row can show how much is left. */
+        val sizeBytes: Long = 0L,
     ) : TransferUi()
 
     data class Finished(
@@ -113,7 +115,9 @@ class AeroViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             AeroInbound.active.collect { p ->
                 _incoming.value = p?.let {
-                    TransferUi.Running(Direction.Incoming, it.filename, it.fraction, it.speedMBs)
+                    TransferUi.Running(
+                        Direction.Incoming, it.filename, it.fraction, it.speedMBs, it.total
+                    )
                 }
             }
         }
@@ -173,6 +177,7 @@ class AeroViewModel(app: Application) : AndroidViewModel(app) {
                                     event.filename,
                                     (event.bytes.toFloat() / event.total).coerceIn(0f, 1f),
                                     event.speedMbps,
+                                    event.total,
                                 )
                                 is TransferEvent.Success -> {
                                     _outgoing.value = null

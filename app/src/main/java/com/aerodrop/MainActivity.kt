@@ -25,8 +25,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aerodrop.ui.RootScreen
+import com.aerodrop.ui.theme.AeroDropTheme
 import java.io.File
 import java.util.ArrayDeque
 
@@ -49,7 +48,7 @@ class MainActivity : ComponentActivity() {
         pendingUris = urisFrom(intent)
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            AeroDropTheme {
                 val vm: AeroViewModel = viewModel()
                 val context = LocalContext.current
 
