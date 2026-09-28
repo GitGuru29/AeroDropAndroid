@@ -1,3 +1,50 @@
 <resources>
     <string name="app_name">AeroDrop</string>
+
+    <!-- Section headers -->
+    <string name="section_nearby" translatable="false">NEARBY</string>
+    <string name="section_transfers" translatable="false">TRANSFERS</string>
+    <string name="section_device" translatable="false">THIS DEVICE</string>
+
+    <!-- Listener status -->
+    <string name="status_listening">Listening</string>
+    <string name="status_offline">Offline</string>
+
+    <!-- Peer discovery -->
+    <plurals name="peers_found">
+        <item quantity="one">%d found</item>
+        <item quantity="other">%d found</item>
+    </plurals>
+    <string name="peers_scanning">scanning…</string>
+    <string name="peers_no_signal">no signal</string>
+    <string name="peers_empty_browsing">Looking for Macs running AeroDrop…</string>
+    <string name="peers_empty_idle">Discovery is not running. Both devices need to be on the same Wi-Fi.</string>
+    <string name="peers_selected" translatable="false">SELECTED</string>
+    <string name="peer_cd">Device %1$s at %2$s</string>
+    <string name="peer_cd_selected">Device %1$s at %2$s, selected</string>
+
+    <!-- Drop zone -->
+    <string name="drop_no_peer">No Mac selected</string>
+    <string name="drop_to_peer">Send to %1$s</string>
+    <string name="drop_busy">Transfer in progress</string>
+    <string name="drop_security" translatable="false">TLS 1.3  ·  local network only</string>
+    <string name="action_send_file">Send a file</string>
+    <string name="action_send_many">Send many</string>
+
+    <!-- Transfers -->
+    <string name="direction_sending" translatable="false">SENDING</string>
+    <string name="direction_receiving" translatable="false">RECEIVING</string>
+    <string name="cd_sending">Sending</string>
+    <string name="cd_receiving">Receiving</string>
+    <string name="transfer_progress">%1$s, %2$d%%</string>
+    <string name="transfer_unnamed">(unnamed)</string>
+    <string name="transfer_done">%1$s, finished</string>
+    <string name="transfer_failed">%1$s, failed</string>
+    <string name="action_clear_cd">Clear the transfer history</string>
+
+    <!-- This device -->
+    <string name="device_fingerprint">Fingerprint</string>
+    <string name="action_copy_id">Copy ID</string>
+    <string name="action_copied" translatable="false">COPIED</string>
+    <string name="received_dir">Received files land in %1$s</string>
 </resources>

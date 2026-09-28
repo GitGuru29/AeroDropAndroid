@@ -244,8 +244,22 @@ app/src/main/java/com/aerodrop/
     AeroFileName.kt           Filename sanitiser (pure, no framework types)
     MediaStoreHelper.kt       IS_PENDING write into Downloads/AeroDrop
   ui/
-    AeroTheme.kt              Colours and formatting
-    RootScreen.kt             Devices list, queue, status
+    AeroScreen.kt              The page, as pure data in and callbacks out
+    Format.kt                  Byte, speed and percent formatting
+    theme/
+      Theme.kt                 AeroDropTheme — the MaterialTheme wrapper
+      Color.kt                 Palette as named roles, plus the M3 scheme
+      Type.kt                  The type scale
+      Shape.kt                 The three corner radii
+      Space.kt                 The spacing scale
+    components/
+      Primitives.kt            Card, section, value, direction, badge, ripple, progress
+      Identity.kt              Wordmark and the device/fingerprint panel
+      Peers.kt                 Discovery results as a single-select list
+      DropZone.kt              The hero and its two actions
+      Transfers.kt             In-flight and finished transfers
+app/src/debug/java/com/aerodrop/
+  ui/Previews.kt              Every reachable screen state, rendered on the IDE
 tools/
   build-mac-peer.sh           Compiles the macOS transport for interop tests
   macpeer.cpp                 Driver for it
@@ -254,6 +268,28 @@ tools/
 `AeroProtocol` and `AeroFileName` deliberately carry no Android types. They hold
 the wire format and the path-safety rules respectively, and keeping them free of
 framework types is what lets plain JVM tests exercise them.
+
+`AeroScreen` takes plain parameters and callbacks while `RootScreen` — in the
+same file — is the only thing that touches `AeroViewModel`. That split is what
+makes the screen previewable: every state it can reach, including a receiving
+transfer and a failed one, renders in the IDE without a second physical Mac on
+the network.
+
+### UI conventions
+
+Two rules are load-bearing and must not be broken by a redesign:
+
+- **Direction is an arrow and a verb, never a colour.** Send and receive go
+  through the same components and differ only in the glyph and the label, which
+  is the same rule `TransferStyle.swift` enforces on macOS. It keeps the two
+  directions legible to a colourblind user and stops them drifting apart.
+- **A transfer is water filling a vessel.** `RippleMark` and `WaveProgress` are
+  that idea drawn with Compose primitives rather than Canvas, so a stalled
+  transfer still reads as "holding water" rather than "broken".
+
+Everything else is tokenised: `AeroSpace` for spacing, `AeroType` for type,
+`AeroRadius` for shape and `AeroColors` for colour. Reaching for a raw `dp`,
+`sp` or hex outside those files means the scale has a gap.
 
 ## Notes and limitations
 
